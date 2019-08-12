@@ -40,14 +40,33 @@ func SessionIDFromContext(ctx context.Context) string {
 
 func newContextWithSessionID(ctx context.Context, r *http.Request) context.Context {
 	var sessionID string
-	cookie, err := r.Cookie(getSessionCookieKey(r))
 
-	if err != nil || cookie == nil || cookie.Value == "" {
-		sessionID = createSession()
+	err := r.ParseForm()
+	if err != nil {
+		sessionID = ""
 	} else {
-		sessionID = cookie.Value
+		sessionID = r.FormValue(getSessionRequestPostKey(r))
+	}
+	if sessionID == "" {
+		// Get session ID from get param
+		sessionID = r.URL.Query().Get(getSessionRequestGetKey(r))
+		if sessionID == "" {
+			// check the cookie
+			cookie, err := r.Cookie(getSessionCookieKey(r))
+			if err != nil || cookie == nil || cookie.Value == "" {
+				sessionID = createSession()
+				return context.WithValue(ctx, sessionIDKey, sessionID)
+			} else {
+				sessionID = cookie.Value
+			}
+		}
 	}
 
+	// Check the session is exists, if not create a new
+	chk := getSessionByID(sessionID)
+	if chk == "" {
+		sessionID = createSession()
+	}
 	return context.WithValue(ctx, sessionIDKey, sessionID)
 }
 
@@ -81,4 +100,43 @@ func getSessionCookieKey(r *http.Request) string {
 		ck = "session"
 	}
 	return ck
+}
+
+func getSessionRequestGetKey(r *http.Request) string {
+	ck := os.Getenv("SESSION_REQUEST_GET_KEY")
+	if ck == "" {
+		ck = "session"
+	}
+	return ck
+}
+func getSessionRequestPostKey(r *http.Request) string {
+	ck := os.Getenv("SESSION_REQUEST_POST_KEY")
+	if ck == "" {
+		ck = "session"
+	}
+	return ck
+}
+
+func getSessionByID(sessionID string) string {
+	var client DSessionServiceClient
+	serverAddr := os.Getenv("SESSION_GRP_SERVER")
+	if serverAddr == "" {
+		serverAddr = "10.20.35.111:30645"
+	}
+
+	conn, err := grpc.Dial(serverAddr, grpc.WithInsecure())
+	defer conn.Close()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	client = NewDSessionServiceClient(conn)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	dsession, err := client.GetSession(ctx, &GetSessionMessage{Id: sessionID})
+	if err != nil {
+		log.Fatalf("%v.GetFeatures(_) = _, %v: ", client, err)
+	}
+	return dsession.Id
 }
