@@ -5,14 +5,32 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
+	st "github.com/golang/protobuf/ptypes/struct"
 	"google.golang.org/grpc"
 )
 
+type Values map[string]*st.Value
 type sessionKey int
 
 const sessionIDKey sessionKey = 0
+
+var sessionConn *grpc.ClientConn
+
+func init() {
+	serverAddr := os.Getenv("SESSION_GRPC_SERVER")
+	if serverAddr == "" {
+		serverAddr = "10.20.35.111:30645"
+	}
+
+	conn, err := grpc.Dial(serverAddr, grpc.WithInsecure())
+	if err != nil {
+		log.Fatal(err)
+	}
+	sessionConn = conn
+}
 
 // SessionHandler is a middleware handler
 func SessionHandler(next http.Handler) http.HandlerFunc {
@@ -38,60 +56,86 @@ func SessionIDFromContext(ctx context.Context) string {
 	return ctx.Value(sessionIDKey).(string)
 }
 
+// Checking the HTTP GET,POST parameters and the COOKIE.
+// If sessionID is not prosented then create a new session
 func newContextWithSessionID(ctx context.Context, r *http.Request) context.Context {
 	var sessionID string
+	sessionID = ""
+	if r.Method == http.MethodPost {
+		sessionID = checkBody(r)
+	}
+	if sessionID == "" {
+		sessionID = checkGetParams(r)
+		if sessionID == "" {
+			sessionID = checkCookie(r)
+			if sessionID == "" {
+				ttl := getSessionTTL(r)
+				sessionID = createSession(ttl)
+				return context.WithValue(ctx, sessionIDKey, sessionID)
+			}
+		}
+	}
 
+	// Check the session is exists, if not create a new
+	sess, err := GetSession(sessionID)
+	if err != nil || sess == nil || len(sess.Values) == 0 {
+		ttl := getSessionTTL(r)
+		sessionID = createSession(ttl)
+	}
+	return context.WithValue(ctx, sessionIDKey, sessionID)
+}
+
+func checkBody(r *http.Request) string {
+	var sessionID string
 	err := r.ParseForm()
 	if err != nil {
 		sessionID = ""
 	} else {
 		sessionID = r.FormValue(getSessionRequestPostKey(r))
 	}
-	if sessionID == "" {
-		// Get session ID from get param
-		sessionID = r.URL.Query().Get(getSessionRequestGetKey(r))
-		if sessionID == "" {
-			// check the cookie
-			cookie, err := r.Cookie(getSessionCookieKey(r))
-			if err != nil || cookie == nil || cookie.Value == "" {
-				sessionID = createSession()
-				return context.WithValue(ctx, sessionIDKey, sessionID)
-			} else {
-				sessionID = cookie.Value
-			}
-		}
-	}
-
-	// Check the session is exists, if not create a new
-	chk := getSessionByID(sessionID)
-	if chk == "" {
-		sessionID = createSession()
-	}
-	return context.WithValue(ctx, sessionIDKey, sessionID)
+	return sessionID
 }
 
-func createSession() string {
+func checkGetParams(r *http.Request) string {
+	var sessionID string
+	sessionID = r.URL.Query().Get(getSessionRequestGetKey(r))
+	return sessionID
+}
+
+func checkCookie(r *http.Request) string {
+	var sessionID string
+	cookie, err := r.Cookie(getSessionCookieKey(r))
+	if err != nil || cookie == nil || cookie.Value == "" {
+		sessionID = ""
+	} else {
+		sessionID = cookie.Value
+	}
+	return sessionID
+}
+
+func createSession(ttl int64) string {
 	var client DSessionServiceClient
-	serverAddr := os.Getenv("SESSION_GRP_SERVER")
-	if serverAddr == "" {
-		serverAddr = "10.20.35.111:30645"
-	}
-
-	conn, err := grpc.Dial(serverAddr, grpc.WithInsecure())
-	defer conn.Close()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	client = NewDSessionServiceClient(conn)
-
+	client = NewDSessionServiceClient(sessionConn)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	dsession, err := client.CreateSession(ctx, &CreateSessionMessage{Ttl: 0})
+
+	dsession, err := client.CreateSession(ctx, &CreateSessionMessage{Ttl: ttl})
 	if err != nil {
 		log.Fatalf("%v.GetFeatures(_) = _, %v: ", client, err)
 	}
 	return dsession.Id
+}
+
+func getSessionTTL(r *http.Request) int64 {
+	ttlstr := os.Getenv("SESSION_TTL")
+	if ttlstr == "" {
+		ttlstr = "0"
+	}
+	ttl, err := strconv.ParseInt(ttlstr, 10, 64)
+	if err != nil {
+		panic(err)
+	}
+	return ttl
 }
 
 func getSessionCookieKey(r *http.Request) string {
@@ -117,26 +161,61 @@ func getSessionRequestPostKey(r *http.Request) string {
 	return ck
 }
 
-func getSessionByID(sessionID string) string {
+func GetSession(sessionID string) (*SessionResponse, error) {
 	var client DSessionServiceClient
-	serverAddr := os.Getenv("SESSION_GRP_SERVER")
-	if serverAddr == "" {
-		serverAddr = "10.20.35.111:30645"
-	}
+	client = NewDSessionServiceClient(sessionConn)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-	conn, err := grpc.Dial(serverAddr, grpc.WithInsecure())
-	defer conn.Close()
+	dsession, err := client.GetSession(ctx, &GetSessionMessage{Id: sessionID})
 	if err != nil {
-		log.Fatal(err)
+		return &SessionResponse{}, err
 	}
 
-	client = NewDSessionServiceClient(conn)
+	return dsession, nil
+}
+
+func AddValuesToSession(sessionID string, values Values) (*SessionResponse, error) {
+	var client DSessionServiceClient
+	client = NewDSessionServiceClient(sessionConn)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	dsession, err := client.GetSession(ctx, &GetSessionMessage{Id: sessionID})
+
+	message := &AddValuesToSessionMessage{Id: sessionID, Values: values}
+	response, err := client.AddValuesToSession(ctx, message)
 	if err != nil {
-		log.Fatalf("%v.GetFeatures(_) = _, %v: ", client, err)
+		return &SessionResponse{}, err
 	}
-	return dsession.Id
+	return response, nil
+}
+
+func AddValueToSession(sessionID string, value *st.Value) (*SessionResponse, error) {
+	var client DSessionServiceClient
+	client = NewDSessionServiceClient(sessionConn)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	message := &AddValueToSessionMessage{Id: sessionID, Value: value}
+	response, err := client.AddValueToSession(ctx, message)
+	if err != nil {
+		return &SessionResponse{}, err
+	}
+	return response, nil
+}
+
+func InvalidateSession(sessionID string) (*SuccessMessage, error) {
+	var client DSessionServiceClient
+	client = NewDSessionServiceClient(sessionConn)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	message := &InvalidateSessionMessage{Id: sessionID}
+	response, err := client.InvalidateSession(ctx, message)
+	if err != nil {
+		return &SuccessMessage{}, err
+	}
+	return response, nil
 }
