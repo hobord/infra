@@ -1,11 +1,12 @@
 package main
 
 import (
-	"log"
 	"net/http"
 	"os"
 
+	ctxrouter "github.com/hobord/infra/ctxrouter"
 	httparams "github.com/hobord/infra/httparams"
+	log "github.com/hobord/infra/log"
 	redirect "github.com/hobord/infra/redirect"
 	requestId "github.com/hobord/infra/requestId"
 	session "github.com/hobord/infra/session"
@@ -30,22 +31,13 @@ func main() {
 		httpPort = "8100"
 	}
 
-	// Proxy
-	// router
-	rdh := redirect.RedirectHandler()
+	rh := ctxrouter.RouterHandler()
+	rdh := redirect.RedirectHandler(rh)
 	pmh := httparams.ParamsHandler(rdh)
 	sh := session.SessionHandler(pmh)
 	ridh := requestId.RequestIDHandler(sh)
 
-	logger := logger(ridh)
+	httplogger := log.HttpLoggerHandler(ridh)
 
-	log.Fatal(http.ListenAndServe(":"+httpPort, logger))
-}
-
-func logger(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Println("Before Logger")
-		next.ServeHTTP(w, r) // call original
-		log.Println("After Logger")
-	})
+	log.Logger.Fatal(http.ListenAndServe(":"+httpPort, httplogger))
 }

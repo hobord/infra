@@ -2,7 +2,7 @@ package session
 
 import (
 	"context"
-	"log"
+	log "github.com/hobord/infra/log"
 	"net/http"
 	"os"
 	"strconv"
@@ -23,11 +23,12 @@ func init() {
 	serverAddr := os.Getenv("SESSION_GRPC_SERVER")
 	if serverAddr == "" {
 		serverAddr = "10.20.35.111:30645"
+		serverAddr = "127.0.0.1:50051"
 	}
 
 	conn, err := grpc.Dial(serverAddr, grpc.WithInsecure())
 	if err != nil {
-		log.Fatal(err)
+		log.Logger.Fatal(err)
 	}
 	sessionConn = conn
 }
@@ -35,7 +36,7 @@ func init() {
 // SessionHandler is a middleware handler
 func SessionHandler(next http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		log.Println("Session Handler")
+		log.Logger.Println("Session Handler")
 
 		ctx := newContextWithSessionID(r.Context(), r)
 		sessionID := SessionIDFromContext(ctx)
@@ -44,10 +45,10 @@ func SessionHandler(next http.Handler) http.HandlerFunc {
 		cookie := http.Cookie{Name: "session", Value: sessionID, Expires: expiration}
 		http.SetCookie(w, &cookie)
 
-		log.Println("SessionID:" + sessionID)
-		log.Println("Session NEXT")
+		log.Logger.Println("SessionID:" + sessionID)
+		log.Logger.Println("Session NEXT")
 		next.ServeHTTP(w, r.WithContext(ctx))
-		log.Println("Session NEXT END")
+		log.Logger.Println("Session NEXT END")
 	}
 }
 
@@ -121,7 +122,8 @@ func createSession(ttl int64) string {
 
 	dsession, err := client.CreateSession(ctx, &CreateSessionMessage{Ttl: ttl})
 	if err != nil {
-		log.Fatalf("%v.GetFeatures(_) = _, %v: ", client, err)
+		// TODO: errorhandling
+		log.Logger.Fatalf("%v.GetFeatures(_) = _, %v: ", client, err)
 	}
 	return dsession.Id
 }

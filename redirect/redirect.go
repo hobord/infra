@@ -2,14 +2,15 @@ package redirect
 
 import (
 	context "context"
-	"log"
 	"net/http"
 	"os"
 	"time"
 
+	"google.golang.org/grpc"
+
+	log "github.com/hobord/infra/log"
 	requestId "github.com/hobord/infra/requestId"
 	session "github.com/hobord/infra/session"
-	"google.golang.org/grpc"
 )
 
 var redirectConn *grpc.ClientConn
@@ -17,22 +18,22 @@ var redirectConn *grpc.ClientConn
 func init() {
 	serverAddr := os.Getenv("REDIRECT_GRPC_SERVER")
 	if serverAddr == "" {
-		serverAddr = "localhost:50052"
+		serverAddr = "127.0.0.1:50052"
 	}
 
 	conn, err := grpc.Dial(serverAddr, grpc.WithInsecure())
 	if err != nil {
-		log.Fatal(err)
+		log.Logger.Debug(err)
 	}
 	redirectConn = conn
 }
 
 // RedirectHandler is a redirect midleware
-func RedirectHandler() http.Handler {
+func RedirectHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sessionID := session.SessionIDFromContext(r.Context())
 		reqID := requestId.RequestIDFromContext(r.Context())
-		log.Println("SessionID:" + sessionID)
+		log.Logger.Println("SessionID:" + sessionID)
 
 		scheme := "http"
 		if r.TLS != nil {
@@ -42,13 +43,14 @@ func RedirectHandler() http.Handler {
 		redirection := requestRedirection(sessionID, reqID, u, r.Method, r.Header)
 		if redirection.HttpStatusCode != 200 {
 			http.Redirect(w, r, redirection.Location, int(redirection.HttpStatusCode))
+			return
 		}
-
+		next.ServeHTTP(w, r)
 	})
 }
 
 func requestRedirection(sessionID, requestID, url, httpMethod string, httpHeaders http.Header) *GetRedirectionResponse {
-	log.Printf("call redirect service with: %v", url)
+	log.Logger.Println("call redirect service with: " + url)
 	var client RedirectServiceClient
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 
@@ -83,6 +85,6 @@ func requestRedirection(sessionID, requestID, url, httpMethod string, httpHeader
 		}
 	}
 
-	log.Println(redirection)
+	log.Logger.Println(redirection)
 	return redirection
 }
