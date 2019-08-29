@@ -32,8 +32,21 @@ func ParamsHandler(next http.Handler) http.Handler {
 }
 
 func filterParametersByURL(r *http.Request) url.Values {
+	var parameters map[string][]string
+
+	if r.Method == http.MethodPost && r.Method == http.MethodPut && r.Method == http.MethodPatch {
+		err := r.ParseForm()
+		if err != nil {
+			// TODO: error log
+			return make(map[string][]string)
+		}
+		parameters = r.Form
+	} else {
+		parameters = r.URL.Query()
+	}
+
 	// TODO: make filter logic, for saving different parameters by domain
-	parameters := r.URL.Query()
+
 	return parameters
 }
 

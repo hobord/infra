@@ -1,0 +1,50 @@
+apiVersion: InfraService/v1
+kind: CtxRouterConfig
+metadata:
+  name: "CtxRouterConfigExample"
+spec:
+  hosts: ["888casino.com", "888poker.com", "localhost:8100"]
+  protocols: ["http", "https"]
+  routes:
+    - name: "route 1"
+      path: "/blog(.*)"
+      requestHeader:
+        require:
+          - name: "x-forwarded"
+            values: ["dsfds"]
+          - name: ":path:"
+            regex: "/(.*)"
+        forbidden:
+          - name: "cache-control"
+            values: ["no-cache"]
+      cookieValues:
+        require:
+          - name: "ds"
+            values: ["ds"]
+            regex: "ds"
+        forbidden:
+          - name: "ds"
+            values: ["ds"]
+            regex: "ds"
+      formValues:
+        require:
+          - name: "ds"
+            values: ["ds"]
+            regex: "ds"
+        forbidden:
+          - name: "ds"
+            values: ["ds"]
+            regex: "ds"
+      sessionValues:
+        require:
+          - name: "language"
+            values: ["en", "de"]
+          - name: ftd
+            values: ["1"]
+        forbidden:
+          - name: country
+            values: ["hu", "dk"]
+      customLogic: "customLogic"
+      target:
+        addresses: ["127.0.0.1:80"]
+        middleware: []

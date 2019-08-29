@@ -12,20 +12,7 @@ import (
 	session "github.com/hobord/infra/session"
 )
 
-type config struct {
-	port        string
-	sessionkey  string
-	log         bool
-	metrics     bool
-	metricsPort string
-}
-
 func main() {
-	// cfg := config{
-	// 	port:        "8100",
-	// 	metrics:     false,
-	// 	metricsPort: "9090"}
-
 	httpPort := os.Getenv("PORT")
 	if httpPort == "" {
 		httpPort = "8100"
